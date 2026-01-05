@@ -1,102 +1,145 @@
-% --- VersaÞo Limpa e Corrigida ---
+% Trabalho RBF - Classificacao Coluna
+% Dataset: column_3C.dat
+
 clear; clc;
+fprintf('Iniciando ...\n');
 
-% 1. Carregar dados
-% Verifica se o arquivo existe
-if ~exist('column_3C.dat', 'file')
-    error('Arquivo column_3C.dat nao encontrado.');
+   % --- 1. Carregando dados ---
+   % O textread separa os numeros das letras (ultima coluna)
+arquivo = 'column_3C.dat';
+if ~exist(arquivo, 'file')
+ error('Arquivo nao encontrado');
 end
 
-[c1, c2, c3, c4, c5, c6, texto] = textread('column_3C.dat', '%f %f %f %f %f %f %s');
-X = [c1, c2, c3, c4, c5, c6];
+[col1,col2,col3,col4,col5,col6, coluna_texto] = textread(arquivo, '%f %f %f %f %f %f %s');
 
-% Limpar espacos no texto
-texto = strtrim(texto);
+% Monta matriz X (junta as colunas numéricas)
+dados_entrada = [col1, col2, col3, col4, col5, col6];
+coluna_texto = strtrim(coluna_texto);
 
-% 2. Converter classes
-y_temp = zeros(length(texto), 1);
-y_temp(strcmp(texto, 'DH')) = 1;
-y_temp(strcmp(texto, 'SL')) = 2;
-y_temp(strcmp(texto, 'NO')) = 3;
+% Convertendo classes (Texto -> Numero)
+% Isso eh necessario pq a rede so faz conta com numero
+labels_numericos = zeros(length(coluna_texto),1);
+  labels_numericos(strcmp(coluna_texto,'DH')) = 1; % Disk Hernia
+  labels_numericos(strcmp(coluna_texto,'SL')) = 2; % Spondilolysthesis
+labels_numericos(strcmp(coluna_texto,'NO')) = 3;   % Normal
 
-% Verificar se tudo foi convertido
-if any(y_temp == 0)
-    error('Erro na conversao das classes. Verifique os nomes no arquivo.');
+if any(labels_numericos==0)
+  error('Erro na conversao das classes');
 end
 
-% One-Hot Encoding
-num_classes = 3;
-n_amostras = size(X, 1);
-Y = zeros(n_amostras, num_classes);
-for i = 1:n_amostras
-    Y(i, y_temp(i)) = 1;
+ % One-Hot Encoding
+ % Transforma o numero da classe em vetor [0 1 0]
+num_amostras = size(dados_entrada, 1);
+ num_classes = 3;
+Y_alvo = zeros(num_amostras, num_classes);
+
+for i=1:num_amostras
+Y_alvo(i, labels_numericos(i)) = 1;
 end
 
-% 3. Configuracoes
-num_execucoes = 10;
-p_treino = 0.7;
-num_neuronios = 15;
-sigma = 40;
-acuracias = zeros(num_execucoes, 1);
+% --- ConfiguraçoÞes da Rede ---
+num_execucoes=10;
+porcentagem_treino = 0.7;
+   num_neuronios = 15;   % Quantos centros vamos usar na camada oculta
+sigma = 40;              % Largura da curva gaussiana (ajuste fino)
+historico_acuracias = zeros(num_execucoes, 1);
 
-fprintf('Iniciando 10 execucoes...\n');
+fprintf('Rodando %d execucoes...\n', num_execucoes);
 
-% 4. Loop Principal
+% Loop Principal (executa 10 vezes para tirar a media)
 for i = 1:num_execucoes
 
-    % Embaralhar dados
-    indices = randperm(n_amostras);
-    X_emb = X(indices, :);
-    Y_emb = Y(indices, :);
+ % Embaralhar os dados para garantir aleatoriedade na divisao
+ indices_embaralhados = randperm(num_amostras);
+ X_misturado = dados_entrada(indices_embaralhados, :);
+    Y_misturado = Y_alvo(indices_embaralhados, :);
 
-    % Dividir Treino e Teste
-    qte_treino = round(n_amostras * p_treino);
-    X_treino = X_emb(1:qte_treino, :);
-    Y_treino = Y_emb(1:qte_treino, :);
-    X_teste = X_emb(qte_treino+1:end, :);
-    Y_teste = Y_emb(qte_treino+1:end, :);
+    % Separar Treino (70%) e Teste (30%)
+    qtde_treino = round(num_amostras * porcentagem_treino);
 
-    % --- Treinamento RBF ---
-    % Escolher Centros
-    idx_centros = randperm(size(X_treino, 1), num_neuronios);
-    Centros = X_treino(idx_centros, :);
+  X_treino = X_misturado(1:qtde_treino,:);
+  Y_treino = Y_misturado(1:qtde_treino,:);
+     X_teste = X_misturado(qtde_treino+1:end,:);
+     Y_teste = Y_misturado(qtde_treino+1:end,:);
 
-    % Matriz H (Treino)
-    H = zeros(size(X_treino, 1), num_neuronios);
-    for k = 1:num_neuronios
-        dif = X_treino - Centros(k, :);
-        dist_sq = sum(dif .^ 2, 2);
-        H(:, k) = exp(-dist_sq / (2 * sigma^2));
+    % --- RBF Treino ---
+    % 1. Escolher Centros: Pegamos amostras aleatorias do próprio treino
+    indices_centros = randperm(size(X_treino,1), num_neuronios);
+ Centros = X_treino(indices_centros, :);
+
+    % 2. Calcular Matriz H (Camada Oculta)
+    % Mede a distancia de cada ponto ate os centros usando funcao Gaussiana
+    H = zeros(size(X_treino,1), num_neuronios);
+    for k=1:num_neuronios
+       diferenca = X_treino - Centros(k,:);
+     distancia_quadrada = sum(diferenca.^2, 2);
+       H(:,k) = exp(-distancia_quadrada / (2*sigma^2));
     end
-    H = [ones(size(X_treino, 1), 1), H]; % Bias
+   H = [ones(size(X_treino,1), 1), H]; % Adiciona Bias (coluna de 1s)
 
-    % Calcular Pesos (W)
+    % 3. Calcular Pesos W
+    % Usa Pseudo-inversa para achar a solucao otima direta
     W = pinv(H) * Y_treino;
 
-    % --- Teste RBF ---
-    % Matriz H (Teste)
-    H_teste = zeros(size(X_teste, 1), num_neuronios);
-    for k = 1:num_neuronios
-        dif = X_teste - Centros(k, :);
-        dist_sq = sum(dif .^ 2, 2);
-        H_teste(:, k) = exp(-dist_sq / (2 * sigma^2));
+   % --- Teste (Validacao) ---
+   % Fazemos a mesma conta da matriz H, mas agora com dados de Teste
+    H_teste = zeros(size(X_teste,1), num_neuronios);
+    for k=1:num_neuronios
+        diferenca = X_teste - Centros(k,:);
+      distancia_quadrada = sum(diferenca.^2, 2);
+        H_teste(:,k) = exp(-distancia_quadrada / (2*sigma^2));
     end
-    H_teste = [ones(size(X_teste, 1), 1), H_teste]; % Bias
+    H_teste = [ones(size(X_teste,1), 1), H_teste];
 
-    % Previsao
-    Y_est = H_teste * W;
+    % Saida da rede (Previsao)
+  Y_estimado = H_teste * W;
 
-    % Avaliacao
-    [~, c_pred] = max(Y_est, [], 2);
-    [~, c_real] = max(Y_teste, [], 2);
+    % Pega o indice da maior saida para saber qual a classe (1, 2 ou 3)
+    [~, classe_predita] = max(Y_estimado, [], 2);
+    [~, classe_real] = max(Y_teste, [], 2);
 
-    acc = sum(c_pred == c_real) / length(c_real);
-    acuracias(i) = acc;
+    % Calcula porcentagem de acertos
+    acertos = sum(classe_predita == classe_real);
+ acuracia_atual = acertos / length(classe_real);
+    historico_acuracias(i) = acuracia_atual;
 
-    fprintf('Execucao %d: Acuracia = %.2f%%\n', i, acc*100);
+    fprintf('Execucao %d: %.2f%%\n', i, acuracia_atual*100);
 end
 
-% Resultado Final
-fprintf('---------------------\n');
-fprintf('Media Final: %.2f%%\n', mean(acuracias)*100);
-fprintf('Desvio Padrao: %.2f%%\n', std(acuracias)*100);
+% Resultados Estatisticos
+media_final = mean(historico_acuracias)*100;
+desvio = std(historico_acuracias)*100;
+
+fprintf('\nMedia Final: %.2f%%\n', media_final);
+fprintf('Desvio Padrao: %.2f%%\n', desvio);
+
+
+% Detalhes da ultima rodada (Visualizacao)
+fprintf('\n--- Ultima Rodada (Amostra 15) ---\n');
+nomes = {'Hernia', 'Spondilo', 'Normal'};
+
+for k=1:15
+    idx_real = classe_real(k);
+    idx_ia = classe_predita(k);
+
+  txt_real = nomes{idx_real};
+    txt_ia = nomes{idx_ia};
+
+    aviso = '';
+    if idx_real ~= idx_ia
+       aviso = ' <--- Erro';
+    end
+    fprintf('%02d | %s -> %s %s\n', k, txt_real, txt_ia, aviso);
+end
+
+% Matriz confusao (Mostra onde a rede errou mais)
+fprintf('\nMatriz de Confusao:\n');
+matriz = zeros(3,3);
+for k=1:length(classe_real)
+ r = classe_real(k);
+    p = classe_predita(k);
+    matriz(r,p) = matriz(r,p) + 1;
+end
+disp('    DH  SL  NO');
+disp(matriz);
